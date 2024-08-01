@@ -1,0 +1,9 @@
+db: "positions.db"
+queries:
+  - "{namespace=\"heating-prod\"}"
+  - "{namespace=\"default\"}"
+loki-source:
+  - url: http://localhost:3100
+
+loki-destination:
+  - url: http://eis.lancable.cn:3100
