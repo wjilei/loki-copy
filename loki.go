@@ -1,7 +1,11 @@
 package main
 
 import (
-	"log"
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"errors"
+	"time"
 
 	"github.com/imroc/req/v3"
 )
@@ -12,8 +16,10 @@ type LokiClient struct {
 }
 
 func NewLokiClient(baseUrl string) *LokiClient {
+	c := req.NewClient()
+	c.SetTimeout(10 * time.Second)
 	return &LokiClient{
-		client:  req.NewClient(),
+		client:  c,
 		baseUrl: baseUrl,
 	}
 }
@@ -21,18 +27,13 @@ func NewLokiClient(baseUrl string) *LokiClient {
 type QueryResult struct {
 	Status string `json:"status"`
 	Data   struct {
-		ResultType string `json:"resultType"`
-		Result     []struct {
-			Stream map[string]string `json:"stream"`
-			Values [][]string        `json:"values"`
-		} `json:"result"`
+		ResultType string       `json:"resultType"`
+		Result     []StreamData `json:"result"`
 	} `json:"data"`
 }
 
 func (c *LokiClient) QueryRange(query string, start int64, end int64) (*QueryResult, error) {
 	var result QueryResult
-
-	log.Println("QueryRange", query, start, end)
 	r, err := c.client.R().
 		SetQueryParamsAnyType(map[string]interface{}{
 			"query":     query,
@@ -48,8 +49,53 @@ func (c *LokiClient) QueryRange(query string, start int64, end int64) (*QueryRes
 	if err != nil {
 		return nil, err
 	}
-	if r.StatusCode != 200 {
-		return nil, err
+	if !r.IsSuccessState() {
+		return nil, errors.New("query failed")
 	}
 	return &result, nil
+}
+
+type StreamData struct {
+	Stream map[string]string `json:"stream"`
+	Values [][]string        `json:"values"`
+}
+
+type PushRequest struct {
+	Streams []StreamData `json:"streams"`
+}
+
+var ErrorPushError = errors.New("push error")
+
+func (c *LokiClient) Push(req *PushRequest) error {
+	b, err := c.gzipReq(req)
+	if err != nil {
+		return err
+	}
+	r, err := c.client.R().
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Content-Encoding", "gzip").
+		SetBody(b).
+		Post(c.baseUrl + "/loki/api/v1/push")
+	if err != nil {
+		// log.Println("push error:", err)
+		return err
+	}
+	if r.StatusCode == 200 || r.StatusCode == 204 {
+		return nil
+	}
+	return errors.New(r.String())
+}
+
+func (c *LokiClient) gzipReq(req *PushRequest) ([]byte, error) {
+	var buf []byte
+	buffer := bytes.NewBuffer(buf)
+	w := gzip.NewWriter(buffer)
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	w.Write(b)
+	w.Close()
+
+	return buffer.Bytes(), nil
 }
