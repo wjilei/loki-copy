@@ -7,22 +7,29 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
+var stop bool
+
 func main() {
 	Init()
 	sigchan := make(chan os.Signal, 1)
-	stop := false
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigchan
 		log.Println("Exiting...")
 		stop = true
 	}()
+	run()
+	log.Println("Exited.")
+}
+
+func run() {
 	for {
 		if stop {
 			CloseDb()
@@ -57,7 +64,9 @@ func main() {
 			err = lokiCliDest.Push(&pushReq)
 			if err != nil {
 				log.Println("Push Error:", err)
-				continue
+				if !strings.Contains(err.Error(), "entry out of order") {
+					continue
+				}
 			}
 
 			if pos > start {
@@ -69,7 +78,6 @@ func main() {
 		}
 		time.Sleep(time.Second * 3)
 	}
-	log.Println("Exited.")
 }
 
 func getNewReadPos(res *QueryResult) (int64, error) {
